@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#-*- coding:utf-8 -*-
+# -*- coding:utf-8 -*-
 
 import argparse
 import logging
@@ -24,6 +24,7 @@ from pfld.utils import AverageMeter
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 def print_args(args):
     for arg in vars(args):
         s = arg + ': ' + str(getattr(args, arg))
@@ -47,8 +48,11 @@ def str2bool(v):
 def train(train_loader, plfd_backbone, auxiliarynet, criterion, optimizer,
           epoch):
     losses = AverageMeter()
+    data_count = len(train_loader)
 
     for img, landmark_gt, attribute_gt, euler_angle_gt in train_loader:
+        print('\r', data_count, end='', flush=True)
+        data_count -= 1
         img = img.to(device)
         attribute_gt = attribute_gt.to(device)
         landmark_gt = landmark_gt.to(device)
@@ -58,7 +62,7 @@ def train(train_loader, plfd_backbone, auxiliarynet, criterion, optimizer,
         features, landmarks = plfd_backbone(img)
         angle = auxiliarynet(features)
         weighted_loss, loss = criterion(attribute_gt, landmark_gt, euler_angle_gt,
-                                    angle, landmarks, args.train_batchsize)
+                                        angle, landmarks, args.train_batchsize)
         optimizer.zero_grad()
         weighted_loss.backward()
         optimizer.step()
@@ -69,7 +73,7 @@ def train(train_loader, plfd_backbone, auxiliarynet, criterion, optimizer,
 
 def validate(wlfw_val_dataloader, plfd_backbone, auxiliarynet, criterion):
     plfd_backbone.eval()
-    auxiliarynet.eval() 
+    auxiliarynet.eval()
     losses = []
     with torch.no_grad():
         for img, landmark_gt, attribute_gt, euler_angle_gt in wlfw_val_dataloader:
@@ -80,10 +84,10 @@ def validate(wlfw_val_dataloader, plfd_backbone, auxiliarynet, criterion):
             plfd_backbone = plfd_backbone.to(device)
             auxiliarynet = auxiliarynet.to(device)
             _, landmark = plfd_backbone(img)
-            loss = torch.mean(torch.sum((landmark_gt - landmark)**2, axis=1))
+            loss = torch.mean(torch.sum((landmark_gt - landmark) ** 2, axis=1))
             losses.append(loss.cpu().numpy())
     print("===> Evaluate:")
-    print('Eval set: Average loss: {:.4f} '.format(np.mean(losses))
+    print('Eval set: Average loss: {:.4f} '.format(np.mean(losses)))
     return np.mean(losses)
 
 
@@ -102,6 +106,11 @@ def main(args):
     # Step 2: model, criterion, optimizer, scheduler
     plfd_backbone = PFLDInference().to(device)
     auxiliarynet = AuxiliaryNet().to(device)
+    if args.pretrained_model:
+        checkpoint = torch.load(args.pretrained_model, map_location=device)
+        plfd_backbone.load_state_dict(checkpoint['plfd_backbone'])
+        auxiliarynet.load_state_dict(checkpoint['auxiliarynet'])
+
     criterion = PFLDLoss()
     optimizer = torch.optim.Adam(
         [{
@@ -134,8 +143,9 @@ def main(args):
     # step 4: run
     writer = SummaryWriter(args.tensorboard)
     for epoch in range(args.start_epoch, args.end_epoch + 1):
+        print('epoch: ',epoch)
         weighted_train_loss, train_loss = train(dataloader, plfd_backbone, auxiliarynet,
-                                      criterion, optimizer, epoch)
+                                                criterion, optimizer, epoch)
         filename = os.path.join(
             str(args.snapshot), "checkpoint_epoch_" + str(epoch) + '.pth.tar')
         save_checkpoint({
@@ -157,8 +167,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='pfld')
     # general
     parser.add_argument('-j', '--workers', default=0, type=int)
-    parser.add_argument('--devices_id', default='0', type=str)  #TBD
-    parser.add_argument('--test_initial', default='false', type=str2bool)  #TBD
+    parser.add_argument('--devices_id', default='0', type=str)  # TBD
+    parser.add_argument('--test_initial', default='false', type=str2bool)  # TBD
 
     # training
     ##  -- optimizer
@@ -184,6 +194,8 @@ def parse_args():
         '--tensorboard', default="./checkpoint/tensorboard", type=str)
     parser.add_argument(
         '--resume', default='', type=str, metavar='PATH')  # TBD
+    parser.add_argument(
+        '--pretrained_model', default=None, type=str)
 
     # --dataset
     parser.add_argument(
@@ -196,7 +208,7 @@ def parse_args():
         default='./data/test_data/list.txt',
         type=str,
         metavar='PATH')
-    parser.add_argument('--train_batchsize', default=256, type=int)
+    parser.add_argument('--train_batchsize', default=128, type=int)
     parser.add_argument('--val_batchsize', default=8, type=int)
     args = parser.parse_args()
     return args
